@@ -1,16 +1,16 @@
 // RegexLR Parser Generator
 // Copyright (C) 2025  Aaron Moss
-// 
+//
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-// 
+//
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU Affero General Public License for more details.
-// 
+//
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
@@ -19,15 +19,14 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::ops::{Index, IndexMut};
 
 use bit_set::BitSet;
 
-use crate::pool::{Ind, Pool};
+use crate::pool::{Ind, Pool, UniquePool};
 
 /// A choice of RegexLR expressions
-#[derive(Clone)]
-struct Alternation {
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Alternation {
     /// Productions in alternation
     prods: BitSet,
 }
@@ -35,7 +34,9 @@ struct Alternation {
 impl Alternation {
     /// Create a new, empty alternation
     fn new() -> Self {
-        Self { prods: BitSet::new() }
+        Self {
+            prods: BitSet::new(),
+        }
     }
 
     /// Create a single-production alternation
@@ -57,22 +58,28 @@ impl Alternation {
 }
 
 impl fmt::Debug for Alternation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{:?}", self.prods) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.prods)
+    }
 }
 
 /// A (possibly empty) slot for an alternation
-#[derive(Clone)]
-pub struct AlternationSlot(Option<Alternation>);
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Slot<E>(Option<E>);
 
-impl AlternationSlot {
+impl<E> Slot<E> {
     /// a new, empty alternation slot
-    fn empty() -> Self { Self(None) }
+    fn empty() -> Self {
+        Self(None)
+    }
 
     /// an alternation slot containing a value
-    fn of(alt: Alternation) -> Self { Self(Some(alt)) }
+    fn of(item: E) -> Self {
+        Self(Some(item))
+    }
 }
 
-impl fmt::Debug for AlternationSlot {
+impl<E: fmt::Debug> fmt::Debug for Slot<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(alt) = &self.0 {
             write!(f, "{:?}", alt)
@@ -83,7 +90,7 @@ impl fmt::Debug for AlternationSlot {
 }
 
 /// A sequence of RegexLR expressions
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Production {
     /// expressions in production
     atoms: Vec<Atom>,
@@ -97,7 +104,7 @@ impl Production {
 
     /// Create a new production for a single atom
     fn of(atom: Atom) -> Self {
-        Self { atoms: vec![ atom ] }
+        Self { atoms: vec![atom] }
     }
 
     /// Create a new production from a list of atoms
@@ -124,62 +131,22 @@ impl Production {
 }
 
 impl fmt::Debug for Production {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{:?}", self.atoms) }
-}
-
-/// A pool of strings.
-/// Indexed by [Ind<String>]
-struct StringPool {
-    /// pool of strings
-    pool: Pool<String>,
-    /// lookup table
-    index: BTreeMap<String, Ind<String>>
-}
-
-impl StringPool {
-    /// Create a new, empty pool
-    fn new() -> Self { Self{ pool: Pool::new(), index: BTreeMap::new() } }
-
-    /// Adds a string to the pool.
-    /// Returns the index of the added string, deduplicating matches
-    fn insert(&mut self, s: &str) -> Ind<String> {
-        if let Some(i) = self.index.get(s) {
-            *i
-        } else {
-            let i = self.pool.insert(s.to_string());
-            self.index.insert(s.to_string(), i);
-            i
-        }
-    }
-}
-
-impl Index<Ind<String>> for StringPool {
-    type Output = str;
-
-    fn index(&self, i: Ind<String>) -> &Self::Output { &self.pool[i] }
-}
-
-impl IndexMut<Ind<String>> for StringPool {
-    fn index_mut(&mut self, i: Ind<String>) -> &mut Self::Output { &mut self.pool[i] }
-}
-
-impl fmt::Debug for StringPool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.pool)
+        write!(f, "{:?}", self.atoms)
     }
 }
 
 /// A single RegexLR expression
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Atom {
     /// A literal string
     Literal(Ind<String>),
     /// A capture group
-    Capture(Ind<AlternationSlot>),
+    Capture(Ind<Slot<Alternation>>),
     /// End-of-input
     End,
     /// Failure
-    Fail
+    Fail,
 }
 
 impl fmt::Debug for Atom {
@@ -188,7 +155,7 @@ impl fmt::Debug for Atom {
             Atom::Literal(i) => write!(f, "Literal({:?})", i),
             Atom::Capture(i) => write!(f, "Capture({:?})", i),
             Atom::End => write!(f, "End"),
-            Atom::Fail => write!(f, "Fail")
+            Atom::Fail => write!(f, "Fail"),
         }
     }
 }
@@ -197,7 +164,7 @@ impl fmt::Debug for Atom {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Expr {
     /// Choice between expressions
-    Choice(Ind<AlternationSlot>),
+    Choice(Ind<Slot<Alternation>>),
     /// Sequence of expressions
     Sequence(Ind<Production>),
     /// Literal string
@@ -205,7 +172,7 @@ pub enum Expr {
     /// Always matches
     Empty,
     /// Never matches
-    Fail
+    Fail,
 }
 
 /// A RegexLR grammar
@@ -213,17 +180,17 @@ pub enum Expr {
 pub struct Grammar {
     /// nonterminal index
     /// maps to top-level alternation of nonterminal
-    nonterminals: BTreeMap<String, Ind<AlternationSlot>>,
+    nonterminals: BTreeMap<String, Ind<Slot<Alternation>>>,
     /// alternation pool
-    alternations: Pool<AlternationSlot>,
+    alternations: Pool<Slot<Alternation>>,
     /// production pool
-    productions: Pool<Production>,
+    productions: UniquePool<Production>,
     /// start production
-    start_prod: Ind<Production>,
+    start_prod: Slot<Ind<Production>>,
     /// empty production
     empty_prod: Ind<Production>,
     /// string pool
-    strings: StringPool,
+    strings: UniquePool<String>,
 }
 
 impl Grammar {
@@ -232,29 +199,32 @@ impl Grammar {
     pub fn new() -> Self {
         let nonterminals = BTreeMap::new();
         let alternations = Pool::new();
-        let mut productions = Pool::new();
-        let strings = StringPool::new();
-        
-        let start_prod = productions.insert(Production::new());
+        let mut productions = UniquePool::new();
+        let start_prod = Slot::empty();
         let empty_prod = productions.insert(Production::new());
+        let strings = UniquePool::new();
 
-        Grammar { nonterminals, alternations, productions, start_prod, empty_prod, strings }
+        Grammar {
+            nonterminals,
+            alternations,
+            productions,
+            start_prod,
+            empty_prod,
+            strings,
+        }
     }
 
     /// Build the start rule from the given expression
     pub fn start(&mut self, expr: Expr) {
-        self.productions[self.start_prod] = match expr {
-            Expr::Choice(alt) => 
-                Production::of_all(vec![Atom::Capture(alt), Atom::End]),
-            Expr::Sequence(prod) =>
-                self.productions[prod].with(Atom::End),
-            Expr::Literal(lit) =>
-                Production::of_all(vec![Atom::Literal(lit), Atom::End]),
-            Expr::Empty =>
-                Production::of(Atom::End),
-            Expr::Fail =>
-                Production::of(Atom::Fail)
+        let prod = match expr {
+            Expr::Choice(alt) => Production::of_all(vec![Atom::Capture(alt), Atom::End]),
+            Expr::Sequence(prod) => self.productions[prod].with(Atom::End),
+            Expr::Literal(lit) => Production::of_all(vec![Atom::Literal(lit), Atom::End]),
+            Expr::Empty => Production::of(Atom::End),
+            Expr::Fail => Production::of(Atom::Fail),
         };
+        let ind = self.productions.insert(prod);
+        self.start_prod = Slot::of(ind);
     }
 
     /// Build a new non-terminal from the given expression
@@ -264,11 +234,11 @@ impl Grammar {
     }
 
     /// Sets up a new rule with the given name, returning its index
-    fn begin_rule(&mut self, name: &str) -> Ind<AlternationSlot> {
+    fn begin_rule(&mut self, name: &str) -> Ind<Slot<Alternation>> {
         match self.nonterminals.get(name) {
             Some(i) => *i,
             None => {
-                let i = self.alternations.insert(AlternationSlot::empty());
+                let i = self.alternations.insert(Slot::empty());
                 self.nonterminals.insert(name.to_string(), i);
                 i
             }
@@ -276,9 +246,9 @@ impl Grammar {
     }
 
     /// Completes a rule with an expression
-    fn finish_rule(&mut self, i: Ind<AlternationSlot>, exprs: Vec<Expr>) {
+    fn finish_rule(&mut self, i: Ind<Slot<Alternation>>, exprs: Vec<Expr>) {
         let alternation = self.alternation_of(exprs);
-        self.alternations[i] = AlternationSlot::of(alternation);
+        self.alternations[i] = Slot::of(alternation);
     }
 
     /// Creates a call to a nonterminal
@@ -289,20 +259,21 @@ impl Grammar {
     /// Creates an alternation of expressions
     pub fn alt(&mut self, exprs: Vec<Expr>) -> Expr {
         // filter out failure values from alternation
-        let exprs: Vec<_> =
-            exprs.into_iter()
-            .filter(|x| *x != Expr::Fail)
-            .collect();
-        
+        let exprs: Vec<_> = exprs.into_iter().filter(|x| *x != Expr::Fail).collect();
+
         // failure for empty alternation
-        if exprs.is_empty() { return Expr::Fail; }
+        if exprs.is_empty() {
+            return Expr::Fail;
+        }
 
         // single expression for single value
-        if exprs.len() == 1 { return exprs[0]; }
-        
+        if exprs.len() == 1 {
+            return exprs[0];
+        }
+
         // transform alternation of expressions into new alternation expression
         let alternation = self.alternation_of(exprs);
-        Expr::Choice(self.alternations.insert(AlternationSlot::of(alternation)))
+        Expr::Choice(self.alternations.insert(Slot::of(alternation)))
     }
 
     /// Converts a list of expressions into an alternation
@@ -319,13 +290,17 @@ impl Grammar {
                         let prod = Production::of(Atom::Capture(alt));
                         alternation.insert(self.productions.insert(prod));
                     }
-                },
-                Expr::Sequence(prod) => { alternation.insert(prod); },
+                }
+                Expr::Sequence(prod) => {
+                    alternation.insert(prod);
+                }
                 Expr::Literal(lit) => {
                     let prod = Production::of(Atom::Literal(lit));
                     alternation.insert(self.productions.insert(prod));
-                },
-                Expr::Empty => { alternation.insert(self.empty_prod); },
+                }
+                Expr::Empty => {
+                    alternation.insert(self.empty_prod);
+                }
                 Expr::Fail => { /* do nothing */ }
             }
         }
@@ -335,25 +310,34 @@ impl Grammar {
     /// Creates a sequence of expressions
     pub fn seq(&mut self, exprs: Vec<Expr>) -> Expr {
         // filter out empty values from sequence
-        let exprs: Vec<_> = 
-            exprs.into_iter()
-            .filter(|x| *x != Expr::Empty)
-            .collect();
-        
+        let exprs: Vec<_> = exprs.into_iter().filter(|x| *x != Expr::Empty).collect();
+
         // empty for empty sequence
-        if exprs.is_empty() { return Expr::Empty; }
+        if exprs.is_empty() {
+            return Expr::Empty;
+        }
 
         // single expression for single value
-        if exprs.len() == 1 { return exprs[0]; }
-        
+        if exprs.len() == 1 {
+            return exprs[0];
+        }
+
         // transform sequence of expressions into new Sequence expression
         let mut production = Production::new();
         for expr in exprs {
             match expr {
-                Expr::Choice(alt) => { production.push(Atom::Capture(alt)); },
-                Expr::Sequence(prod) => { production.append(&self.productions[prod]); },
-                Expr::Literal(lit) => { production.push(Atom::Literal(lit)); },
-                Expr::Empty => { unreachable!("empty expressions filtered earlier") },
+                Expr::Choice(alt) => {
+                    production.push(Atom::Capture(alt));
+                }
+                Expr::Sequence(prod) => {
+                    production.append(&self.productions[prod]);
+                }
+                Expr::Literal(lit) => {
+                    production.push(Atom::Literal(lit));
+                }
+                Expr::Empty => {
+                    unreachable!("empty expressions filtered earlier")
+                }
                 Expr::Fail => {
                     // any failure in a sequence causes the whole sequence to fail
                     return Expr::Fail;
@@ -362,11 +346,15 @@ impl Grammar {
         }
         Expr::Sequence(self.productions.insert(production))
     }
-    
+
     /// Creates a literal string.
     /// Returns [Expr::Empty] for empty string.
-    pub fn lit(&mut self, s: &str) -> Expr {
-        if s.is_empty() { Expr::Empty } 
-        else { Expr::Literal(self.strings.insert(s)) }
+    pub fn lit<S: ToString>(&mut self, s: &S) -> Expr {
+        let t = s.to_string();
+        if t.is_empty() {
+            Expr::Empty
+        } else {
+            Expr::Literal(self.strings.insert(t))
+        }
     }
 }
