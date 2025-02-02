@@ -114,6 +114,11 @@ impl<Element: fmt::Debug> fmt::Debug for Pool<Element> {
 pub struct Ind<Element>(u32, PhantomData<*const Element>);
 
 impl<Element> Ind<Element> {
+    /// construct from token
+    fn new(ind: u32) -> Self {
+        Ind(ind, PhantomData)
+    }
+    
     /// construct from index
     fn of(i: usize) -> Self {
         Ind(i as u32, PhantomData)
@@ -236,7 +241,7 @@ impl<Element: Eq + Hash> UniquePool<Element> {
         while let Some(j) = self.index.find(h, i, &mut probe) {
             // found if keys equal
             if key == self.key_at_hash_entry(j) {
-                return Some(Ind::<Element>::of(j));
+                return Some(Ind::new(self.index.indices[j]));
             }
             // keep searching if not
             i = j;
@@ -419,15 +424,13 @@ impl UniquePoolIndex {
         let cap = self.capacity();
         debug_assert!(cap != 0 && cap.is_power_of_two());
         // all zeros followed by all ones for power-of-two size
-        let low_mask = cap - 1;
-        // same, reversed
-        let high_mask = !low_mask;
+        let mask = cap - 1;
 
         let hu = h as usize;
         // valid index into the hashes/probes vector
-        let index = hu & low_mask;
+        let index = hu & mask;
         // stride into the hashes/probes vector (odd number)
-        let stride = ((hu & high_mask) >> (cap.ilog2() - 1)) | 0x1;
+        let stride = (hu >> (cap.ilog2() - 1)) | 0x1;
         (index, stride)
     }
 
