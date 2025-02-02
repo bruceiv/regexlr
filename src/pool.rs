@@ -14,7 +14,14 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! An append-only pool of a given type, with a typed index
+//! An append-only pool of a given type, with a typed index.
+//! [Pool<Element>] is an append-only pool of `Element`, [UniquePool<Element>]
+//! is a similar pool that deduplicates values on insert, while [Ind<Element>]
+//! is an index into `Pool<Element>` or `UniquePool<Element>`, branded by the
+//! element type to reduce the potential for type-errors.
+
+#[cfg(test)]
+mod tests;
 
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -38,6 +45,16 @@ impl<Element> Pool<Element> {
         self.items.push(e);
         Ind::<Element>::of(self.items.len() - 1)
     }
+
+    /// Borrowing iteration over the pool
+    pub fn iter(&self) -> <&Self as IntoIterator>::IntoIter {
+        self.into_iter()
+    }
+
+    /// Mutating borrowing interation over the pool
+    pub fn iter_mut(&mut self) -> <&mut Self as IntoIterator>::IntoIter {
+        self.into_iter()
+    }
 }
 
 impl<Element> Index<Ind<Element>> for Pool<Element> {
@@ -51,6 +68,37 @@ impl<Element> Index<Ind<Element>> for Pool<Element> {
 impl<Element> IndexMut<Ind<Element>> for Pool<Element> {
     fn index_mut(&mut self, i: Ind<Element>) -> &mut Self::Output {
         &mut self.items[i.to_usize()]
+    }
+}
+
+impl<'pool, Element> IntoIterator for &'pool Pool<Element> {
+    type Item = &'pool Element;
+
+    type IntoIter = <&'pool Vec<Element> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter()
+    }
+}
+
+impl<'pool, Element> IntoIterator for &'pool mut Pool<Element> {
+    type Item = &'pool mut Element;
+
+    type IntoIter = <&'pool mut Vec<Element> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter_mut()
+    }
+}
+
+impl<Element> IntoIterator for Pool<Element> {
+    type Item = Element;
+
+    type IntoIter = <Vec<Element> as IntoIterator>::IntoIter;
+
+    /// Consuming iteration over the pool
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.into_iter()
     }
 }
 
@@ -198,17 +246,14 @@ impl<Element: Eq + Hash> UniquePool<Element> {
         None
     }
 
+    /// Borrowing iteration over the pool
+    pub fn iter(&self) -> <&Self as IntoIterator>::IntoIter {
+        self.into_iter()
+    }
+
     /// Gets a reference to the element key at hash entry `i`
     fn key_at_hash_entry(&self, i: usize) -> &Element {
         &self.items[self.index.indices[i] as usize]
-    }
-}
-
-impl<Element: fmt::Debug> fmt::Debug for UniquePool<Element> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_map()
-            .entries(self.items.iter().enumerate())
-            .finish()
     }
 }
 
@@ -217,6 +262,35 @@ impl<Element> Index<Ind<Element>> for UniquePool<Element> {
 
     fn index(&self, i: Ind<Element>) -> &Self::Output {
         &self.items[i.to_usize()]
+    }
+}
+
+impl<'pool, Element> IntoIterator for &'pool UniquePool<Element> {
+    type Item = &'pool Element;
+
+    type IntoIter = <&'pool Vec<Element> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter()
+    }
+}
+
+impl<Element> IntoIterator for UniquePool<Element> {
+    type Item = Element;
+
+    type IntoIter = <Vec<Element> as IntoIterator>::IntoIter;
+
+    /// Consuming iteration over the pool
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.into_iter()
+    }
+}
+
+impl<Element: fmt::Debug> fmt::Debug for UniquePool<Element> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map()
+            .entries(self.items.iter().enumerate())
+            .finish()
     }
 }
 
