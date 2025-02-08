@@ -14,19 +14,14 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-//! A simple matcher for RegexLR expressions.
-//! This is meant primarily as a testing tool; the code is deliberately
-//! optimized for clarity over performance. In particular, this has
-//! exponential worst-case "try all matches" behaviour.
-//!
-//! There is one optimization; if an `End` atom (which is only present in a
-//! [Grammar] at the end of the start-production) successfully matches at
-//! end-of-input, the other productions will short-circuit to a fast return.
-//! Productions are tried from their latest valid start point first to attempt
-//! to take advantage of this short-circuit sooner.
+//! A matcher for RegexLR expressions.
+//! 
+//! This uses a Packrat algorithm, modified to keep multiple possible prefix 
+//! matches for RegexLR's unordered-choice semantics. It uses the memoization 
+//! approach of Warth, Douglass & Millstein to support left-recursion.
 
 use std::cmp::Ordering::{Equal, Greater, Less};
-use std::collections::{hash_map, BTreeSet, HashMap};
+use std::collections::{hash_map, HashMap};
 use std::iter::zip;
 
 use bit_set::BitSet;
@@ -36,35 +31,35 @@ use crate::pool::Ind;
 use crate::Error::{InputDoesNotMatch, MissingRule, MissingStart};
 
 /// A success result for matching
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum Match {
     /// Short-circuit on successful match of entire input
     Done,
     /// Match a prefix of the entire input, ending at the contained indices.
     /// Indices will be non-empty.
-    Prefix(BTreeSet<usize>),
+    Prefix(BitSet),
     /// `Prefix`, but with incomplete information due to unresolved left-recursion.
     /// Indices may be empty.
-    Incomplete(BTreeSet<usize>),
+    Incomplete(BitSet),
 }
 
 impl Match {
     /// Creates a partial match at the given index
     fn at(i: usize) -> Self {
-        let mut set = BTreeSet::new();
+        let mut set = BitSet::new();
         set.insert(i);
         Self::Prefix(set)
     }
 
     /// Creates a new incomplete result
     fn incomplete() -> Self {
-        Self::Incomplete(BTreeSet::new())
+        Self::Incomplete(BitSet::new())
     }
 }
 
 /// Failure result.
 /// Couples index of farthest match with vector of failures
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ParseFailure(usize, Vec<crate::Error>);
 
 impl ParseFailure {
@@ -153,7 +148,7 @@ impl ParseState {
         &mut self,
         i: usize,
         a_ind: Ind<Slot<Alternation>>,
-        partial: &BTreeSet<usize>,
+        partial: &BitSet,
     ) {
         self.alternation_results
             .insert((i, a_ind), Ok(Match::Incomplete(partial.clone())));
@@ -224,9 +219,9 @@ fn matches_alt(
     };
 
     // matches for this alternation at this start position
-    let mut all_matches = BTreeSet::new();
+    let mut all_matches = BitSet::new();
     // matches found in the current loop iteration
-    let mut new_matches = BTreeSet::new();
+    let mut new_matches = BitSet::new();
     // errors at furthest position
     let mut latest_errs = ParseFailure::new(start);
     // productions with incomplete results
@@ -245,14 +240,14 @@ fn matches_alt(
                     // short-circuit on completed match
                     return Ok(Match::Done);
                 }
-                Ok(Match::Prefix(mut inds)) => {
+                Ok(Match::Prefix(inds)) => {
                     // add success results to output set, mark production complete
-                    new_matches.append(&mut inds);
+                    new_matches.union_with(&inds);
                     completed_prods.insert(p);
                 }
-                Ok(Match::Incomplete(mut inds)) => {
+                Ok(Match::Incomplete(inds)) => {
                     // add success results to output set
-                    new_matches.append(&mut inds);
+                    new_matches.union_with(&inds);
                 }
                 Err(errs) => {
                     // track latest errors, mark production complete
@@ -261,11 +256,13 @@ fn matches_alt(
                 }
             }
         }
-        // stop re-trying completed productions
+        // stop re-trying completed productions and previous matches
+        new_matches.difference_with(&all_matches);
         incomplete_prods.difference_with(&completed_prods);
-
-        if new_matches.is_empty() {
+        
+        if new_matches.is_empty() || incomplete_prods.is_empty() {
             // found all (possibly recursive) matches
+            all_matches.union_with(&new_matches);
             let res = if all_matches.is_empty() {
                 Err(latest_errs)
             } else {
@@ -274,7 +271,7 @@ fn matches_alt(
             return state.finish_alternation(start, a_ind, res);
         } else {
             // update current set of matches and continue
-            all_matches.append(&mut new_matches);
+            all_matches.union_with(&new_matches);
             state.update_alternation(start, a_ind, &all_matches);
         }
     }
@@ -299,7 +296,7 @@ fn matches_prod(
     let prod = &g[p_ind];
 
     // next valid indices to match
-    let mut start_inds = BTreeSet::new();
+    let mut start_inds = BitSet::new();
     start_inds.insert(start);
 
     // quick exit on empty production
@@ -314,23 +311,23 @@ fn matches_prod(
 
     // loop through productions
     for atom in prod {
-        let mut next_inds = BTreeSet::new();
+        let mut next_inds = BitSet::new();
 
-        // loop through start indices in reverse order
-        for i in start_inds.iter().rev() {
-            match matches_atom(g, atom, s, state, *i) {
+        // loop through start indices
+        for i in &start_inds {
+            match matches_atom(g, atom, s, state, i) {
                 Ok(Match::Done) => {
                     // short-circuit on completed match
                     return Ok(Match::Done);
                 }
-                Ok(Match::Prefix(mut inds)) => {
+                Ok(Match::Prefix(inds)) => {
                     // add success results to output set
-                    next_inds.append(&mut inds);
+                    next_inds.union_with(&inds);
                 }
-                Ok(Match::Incomplete(mut inds)) => {
+                Ok(Match::Incomplete(inds)) => {
                     // add success results to output set, but mark incomplete
                     is_complete = false;
-                    next_inds.append(&mut inds);
+                    next_inds.union_with(&inds);
                 }
                 Err(errs) => {
                     // track latest errors
@@ -354,11 +351,10 @@ fn matches_prod(
     }
 
     // got to the end, everything matches, only cache state if complete
-    let res = Ok(Match::Prefix(start_inds));
     if is_complete {
-        state.insert_production(start, p_ind, res)
+        state.insert_production(start, p_ind, Ok(Match::Prefix(start_inds)))
     } else {
-        res
+        Ok(Match::Incomplete(start_inds))
     }
 }
 

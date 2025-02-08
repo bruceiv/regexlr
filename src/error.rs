@@ -20,7 +20,7 @@ use crate::grammar::{Alternation, Slot};
 use crate::pool::Ind;
 
 /// Errors that a RegexLR grammar may encounter
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Error {
     /// Input does not match grammar
     InputDoesNotMatch {
