@@ -14,17 +14,21 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-mod error;
-mod grammar;
-mod matcher;
-mod pool;
+//! Compilation and matching errors for RegexLR parsers.
 
-pub use error::Error;
+use crate::grammar::{Alternation, Slot};
+use crate::pool::Ind;
 
-use grammar::{examples, Expr, Grammar};
-
-fn main() {
-    println!("foobarbaz: {:#?}", examples::foobarbaz());
-    println!("parens: {:#?}", examples::parens());
-    println!("left_a_star: {:#?}", examples::left_a_star());
+/// Errors that a RegexLR grammar may encounter
+#[derive(Clone, Copy)]
+pub enum Error {
+    /// Input does not match grammar
+    InputDoesNotMatch {
+        /// location of furthest partial match
+        location: usize,
+    },
+    /// Grammar has no start rule
+    MissingStart,
+    /// Grammar missing called non-terminal
+    MissingRule { ind: Ind<Slot<Alternation>> },
 }

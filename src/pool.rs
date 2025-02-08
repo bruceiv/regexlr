@@ -29,7 +29,7 @@ use std::marker::PhantomData;
 use std::ops::{Index, IndexMut};
 
 /// An indexed append-only collection.
-pub struct Pool<Element> {
+pub(crate) struct Pool<Element> {
     items: Vec<Element>,
 }
 
@@ -111,16 +111,16 @@ impl<Element: fmt::Debug> fmt::Debug for Pool<Element> {
 }
 
 /// An index into a [Pool<Element>]
-pub struct Ind<Element>(u32, PhantomData<*const Element>);
+pub(crate) struct Ind<Element>(u32, PhantomData<*const Element>);
 
 impl<Element> Ind<Element> {
     /// construct from token
     fn new(ind: u32) -> Self {
         Ind(ind, PhantomData)
     }
-    
+
     /// construct from index
-    fn of(i: usize) -> Self {
+    pub fn of(i: usize) -> Self {
         Ind(i as u32, PhantomData)
     }
 
@@ -160,7 +160,7 @@ impl<Element> fmt::Debug for Ind<Element> {
 
 /// A deduplicated append-only collection.
 /// Uses a hashtable to ensure uniqueness of pool contents.
-pub struct UniquePool<Element> {
+pub(crate) struct UniquePool<Element> {
     /// element pool; owning storage for contained elements
     items: Vec<Element>,
     /// index into element pool of hash-table entry

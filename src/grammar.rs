@@ -17,8 +17,13 @@
 //! A RegexLR grammar.
 //! Includes supporting data structures for expressions, productions, and alternations.
 
-use std::collections::BTreeMap;
+pub(crate) mod examples;
+
+#[cfg(test)]
+mod tests;
+
 use std::fmt;
+use std::{collections::BTreeMap, ops::Index};
 
 use bit_set::BitSet;
 
@@ -26,7 +31,7 @@ use crate::pool::{Ind, Pool, UniquePool};
 
 /// A choice of RegexLR expressions
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Alternation {
+pub(crate) struct Alternation {
     /// Productions in alternation
     prods: BitSet,
 }
@@ -55,6 +60,11 @@ impl Alternation {
     fn union_with(&mut self, that: &Alternation) {
         self.prods.union_with(&that.prods);
     }
+
+    /// Get the production indices
+    pub fn production_inds(&self) -> &BitSet {
+        &self.prods
+    }
 }
 
 impl fmt::Debug for Alternation {
@@ -65,7 +75,7 @@ impl fmt::Debug for Alternation {
 
 /// A (possibly empty) slot for an alternation
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Slot<E>(Option<E>);
+pub(crate) struct Slot<E>(Option<E>);
 
 impl<E> Slot<E> {
     /// a new, empty alternation slot
@@ -91,7 +101,7 @@ impl<E: fmt::Debug> fmt::Debug for Slot<E> {
 
 /// A sequence of RegexLR expressions
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct Production {
+pub(crate) struct Production {
     /// expressions in production
     atoms: Vec<Atom>,
 }
@@ -128,6 +138,26 @@ impl Production {
     fn append(&mut self, that: &Production) {
         self.atoms.append(&mut that.atoms.clone());
     }
+
+    /// Is this production empty?
+    pub fn is_empty(&self) -> bool {
+        self.atoms.is_empty()
+    }
+
+    /// Borrowing iterator
+    pub fn iter(&self) -> <&Self as IntoIterator>::IntoIter {
+        self.into_iter()
+    }
+}
+
+impl<'p> IntoIterator for &'p Production {
+    type Item = &'p Atom;
+
+    type IntoIter = <&'p Vec<Atom> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.atoms.iter()
+    }
 }
 
 impl fmt::Debug for Production {
@@ -138,7 +168,7 @@ impl fmt::Debug for Production {
 
 /// A single RegexLR expression
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Atom {
+pub(crate) enum Atom {
     /// A literal string
     Literal(Ind<String>),
     /// A capture group
@@ -212,6 +242,12 @@ impl Grammar {
             empty_prod,
             strings,
         }
+    }
+
+    /// Get the index of the start production
+    pub(crate) fn start_production(&self) -> Option<Ind<Production>> {
+        // fail early if missing production
+        self.start_prod.0
     }
 
     /// Build the start rule from the given expression
@@ -356,5 +392,32 @@ impl Grammar {
         } else {
             Expr::Literal(self.strings.insert(t))
         }
+    }
+}
+
+impl Index<Ind<Slot<Alternation>>> for Grammar {
+    type Output = Option<Alternation>;
+
+    /// get alternation from pool, `None` if not set
+    fn index(&self, i: Ind<Slot<Alternation>>) -> &Self::Output {
+        &self.alternations[i].0
+    }
+}
+
+impl Index<Ind<Production>> for Grammar {
+    type Output = Production;
+
+    /// get string from pool
+    fn index(&self, i: Ind<Production>) -> &Self::Output {
+        &self.productions[i]
+    }
+}
+
+impl Index<Ind<String>> for Grammar {
+    type Output = String;
+
+    /// get string from pool
+    fn index(&self, i: Ind<String>) -> &Self::Output {
+        &self.strings[i]
     }
 }
